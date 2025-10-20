@@ -26,12 +26,12 @@ def set_seed(seed):
         torch.backends.cudnn.benchmark = False
 
 set_seed(SEED)
-print(f"Random seed set to {SEED} for full pipeline determinism.") [2]
+print(f"Random seed set to {SEED} for full pipeline determinism.") [1]
 
 # Placeholder for complex GDSC feature extraction/distillation
 def load_and_distill_gdsc_features():
     """Simulate loading distilled GDSC genomic features (VAE/Autoencoder step)."""
-    # This represents reducing >57k multi-omics features (GDSC/CCLE) to a dense vector [3]
+    # This represents reducing >57k multi-omics features (GDSC/CCLE) to a dense vector 
     print("Simulating distillation of GDSC multi-omics features...") 
     return "GDSC_Embedding_Model.h5"
 
@@ -56,13 +56,14 @@ if targets:
 else:
     raise ValueError(f"Target with UniProt ID {CDK2_ID} not found.")
 
-# Filter for high-quality, quantitative dose-response data [1, 4, 5]
+# Filter for high-quality, quantitative dose-response data [2, 3]
 activities = activity_api.filter(target_chembl_id=target_chembl_id).filter(
-    pchembl_value__isnull=False # Must have standardized pChEMBL value
+    pchembl_value__isnull=False # Must have standardized pChEMBL value [3]
 ).filter(
-    assay_type__in= # Binding or Functional assays
+    # CORRECTION: Specify desired assay types (B: Binding, F: Functional)
+    assay_type__in=
 ).filter(
-    standard_type__in=['IC50', 'EC50', 'Ki', 'Kd'] # Dose-response measurements
+    standard_type__in=['IC50', 'EC50', 'Ki', 'Kd'] # Only dose-response measurements 
 ).only(['molecule_chembl_id', 'canonical_smiles', 'target_chembl_id', 'pchembl_value'])
 
 df_raw = pd.DataFrame(list(activities))
@@ -96,7 +97,7 @@ def generate_scaffold(smiles):
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
         return 'Invalid_SMILES'
-    # Use RDKit's MurckoScaffoldSmiles function [6, 7]
+    # Uses RDKit's MurckoScaffoldSmiles function [4, 5]
     return MurckoScaffold.MurckoScaffoldSmiles(mol=mol) 
 
 def scaffold_split_data(X_drugs, Y_labels, frac_test=0.2):
@@ -108,8 +109,8 @@ def scaffold_split_data(X_drugs, Y_labels, frac_test=0.2):
     # 1. Group data by unique scaffold
     scaffold_groups = df.groupby('scaffold')['smiles'].apply(list).to_dict()
     
-    # 2. Sort groups by size (largest first for deterministic, efficient splitting) [8, 7]
-    sorted_scaffolds = sorted(scaffold_groups.items(), key=lambda x: len(x[1]), reverse=True) 
+    # 2. Sort groups by size (largest first for deterministic, efficient splitting) [6, 7]
+    sorted_scaffolds = sorted(scaffold_groups.items(), key=lambda x: len(x[2]), reverse=True) 
     
     test_size_needed = int(len(df) * frac_test)
     test_smiles =
@@ -125,7 +126,7 @@ def scaffold_split_data(X_drugs, Y_labels, frac_test=0.2):
     df_test = df[df['smiles'].isin(test_set_smiles)].reset_index(drop=True)
     df_train = df[~df['smiles'].isin(test_set_smiles)].reset_index(drop=True)
     
-    # Validation check: shared scaffolds must be 0 for OOD test [9, 7]
+    # Validation check: shared scaffolds must be 0 for OOD test [6, 5]
     shared_scaffolds = set(df_train['scaffold'].unique()) & set(df_test['scaffold'].unique())
     print(f"\nScaffold Split Results:")
     print(f"Test Set Size: {len(df_test)} ({len(df_test)/len(df)*100:.2f}%)")
@@ -144,7 +145,7 @@ X_test_drug, X_test_target, Y_test = scaffold_split_data(drugs, targets, frac_te
 # SECTION III: Model Construction and Training
 # -----------------------------------------------------------
 
-# Define the Hybrid Encoders [10, 11, 12]
+# Define the Hybrid Encoders 
 drug_encoding = 'AttentiveFP' 
 target_encoding = 'Transformer' 
 
@@ -162,11 +163,10 @@ test_data = test_set
 
 
 # 2. Model Initialization and Training (Tier II Hybrid)
-# CORRECTION: Added default classifier hidden layer dimensions (cls_hidden_dims) 
-# as this parameter cannot be empty. [13, 11]
+# CORRECTION: Setting default classifier hidden layer dimensions (cls_hidden_dims) to a valid array.
 config = utils.generate_config(drug_encoding=drug_encoding, 
                                target_encoding=target_encoding, 
-                               cls_hidden_dims = , # Default MLP architecture for fusion
+                               cls_hidden_dims = , # Standard MLP fusion architecture
                                train_epoch=10, 
                                LR=0.001, 
                                batch_size=128,
@@ -178,7 +178,7 @@ print(f"Using device: {device}")
 model = DTI.model_initialize(**config).to(device)
 
 print("\n--- Starting Training on Scaffold Split Data ---")
-# Training monitors PR-AUC, preferred for imbalanced DTI data [14, 15]
+# Training monitors PR-AUC, preferred for imbalanced DTI data 
 model.train(train, val, test_data, 
             training_loss = 'BCEWithLogitLoss', 
             model_path = 'multi_modal_dti_model.pth')
@@ -203,7 +203,7 @@ print(f"PR-AUC (Preferred Metric for Imbalance): {pr_auc:.4f}")
 y_true = Y_test 
 y_score = pred_probas
 
-# Calculate EF at 1% cutoff using ODDT [16, 17]
+# Calculate EF at 1% cutoff using ODDT [8, 9, 10]
 EF_1_percent = enrichment_factor(y_true=y_true, 
                                 y_score=y_score, 
                                 percentage=1.0, 
