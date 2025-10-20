@@ -4,3 +4,4 @@ chembl-webresource-client
 oddt
 numpy
 pandas
+torch
