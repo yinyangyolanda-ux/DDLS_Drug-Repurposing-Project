@@ -31,7 +31,7 @@ print(f"Random seed set to {SEED} for full pipeline determinism.") [1]
 # Placeholder for complex GDSC feature extraction/distillation
 def load_and_distill_gdsc_features():
     """Simulate loading distilled GDSC genomic features (VAE/Autoencoder step)."""
-    # This represents reducing >57k multi-omics features (GDSC/CCLE) to a dense vector 
+    # This represents reducing >57k multi-omics features (GDSC/CCLE) to a dense vector
     print("Simulating distillation of GDSC multi-omics features...") 
     return "GDSC_Embedding_Model.h5"
 
@@ -56,11 +56,11 @@ if targets:
 else:
     raise ValueError(f"Target with UniProt ID {CDK2_ID} not found.")
 
-# Filter for high-quality, quantitative dose-response data [2, 3]
+# Filter for high-quality, quantitative dose-response data
 activities = activity_api.filter(target_chembl_id=target_chembl_id).filter(
-    pchembl_value__isnull=False # Must have standardized pChEMBL value [3]
+    pchembl_value__isnull=False # Must have standardized pChEMBL value
 ).filter(
-    # CORRECTION: Specify desired assay types (B: Binding, F: Functional)
+    # CORRECTION: Specify acceptable assay types (B: Binding, F: Functional)
     assay_type__in=
 ).filter(
     standard_type__in=['IC50', 'EC50', 'Ki', 'Kd'] # Only dose-response measurements 
@@ -97,7 +97,7 @@ def generate_scaffold(smiles):
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
         return 'Invalid_SMILES'
-    # Uses RDKit's MurckoScaffoldSmiles function [4, 5]
+    # Uses RDKit's MurckoScaffoldSmiles function
     return MurckoScaffold.MurckoScaffoldSmiles(mol=mol) 
 
 def scaffold_split_data(X_drugs, Y_labels, frac_test=0.2):
@@ -109,111 +109,4 @@ def scaffold_split_data(X_drugs, Y_labels, frac_test=0.2):
     # 1. Group data by unique scaffold
     scaffold_groups = df.groupby('scaffold')['smiles'].apply(list).to_dict()
     
-    # 2. Sort groups by size (largest first for deterministic, efficient splitting) [6, 7]
-    sorted_scaffolds = sorted(scaffold_groups.items(), key=lambda x: len(x[2]), reverse=True) 
-    
-    test_size_needed = int(len(df) * frac_test)
-    test_smiles =
-    
-    # 3. Assign full scaffolds to the test set until the required size is met
-    for _, smiles_list in sorted_scaffolds:
-        if len(test_smiles) < test_size_needed:
-            test_smiles.extend(smiles_list)
-        else:
-            break
-            
-    test_set_smiles = set(test_smiles)
-    df_test = df[df['smiles'].isin(test_set_smiles)].reset_index(drop=True)
-    df_train = df[~df['smiles'].isin(test_set_smiles)].reset_index(drop=True)
-    
-    # Validation check: shared scaffolds must be 0 for OOD test [6, 5]
-    shared_scaffolds = set(df_train['scaffold'].unique()) & set(df_test['scaffold'].unique())
-    print(f"\nScaffold Split Results:")
-    print(f"Test Set Size: {len(df_test)} ({len(df_test)/len(df)*100:.2f}%)")
-    print(f"Shared Scaffolds (must be 0): {len(shared_scaffolds)}")
-    assert len(shared_scaffolds) == 0, "Scaffold splitting failed: Scaffolds are shared."
-    
-    return df_train['smiles'].values, df_train['target_sequence'].values, df_train['label'].values, \
-           df_test['smiles'].values, df_test['target_sequence'].values, df_test['label'].values
-
-# Execute the scaffold split
-X_train_drug, X_train_target, Y_train, \
-X_test_drug, X_test_target, Y_test = scaffold_split_data(drugs, targets, frac_test=0.2)
-
-
-# -----------------------------------------------------------
-# SECTION III: Model Construction and Training
-# -----------------------------------------------------------
-
-# Define the Hybrid Encoders 
-drug_encoding = 'AttentiveFP' 
-target_encoding = 'Transformer' 
-
-# 1. Prepare Data for DeepPurpose
-print(f"\nPreparing data for Drug Encoder: {drug_encoding}, Target Encoder: {target_encoding}")
-
-train, val, _ = utils.data_process(X_drug=X_train_drug, X_target=X_train_target, Y=Y_train, 
-                                   drug_encoding=drug_encoding, target_encoding=target_encoding, 
-                                   split_method='random', frac=[0.8, 0.2, 0.0], random_seed=SEED)
-
-test_set = utils.data_process(X_drug=X_test_drug, X_target=X_test_target, Y=Y_test, 
-                              drug_encoding=drug_encoding, target_encoding=target_encoding, 
-                              split_method='random', frac=[1.0, 0.0, 0.0], random_seed=SEED)
-test_data = test_set
-
-
-# 2. Model Initialization and Training (Tier II Hybrid)
-# CORRECTION: Setting default classifier hidden layer dimensions (cls_hidden_dims) to a valid array.
-config = utils.generate_config(drug_encoding=drug_encoding, 
-                               target_encoding=target_encoding, 
-                               cls_hidden_dims = , # Standard MLP fusion architecture
-                               train_epoch=10, 
-                               LR=0.001, 
-                               batch_size=128,
-                               binary_thre=ACTIVITY_THRESHOLD) 
-
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-print(f"Using device: {device}")
-
-model = DTI.model_initialize(**config).to(device)
-
-print("\n--- Starting Training on Scaffold Split Data ---")
-# Training monitors PR-AUC, preferred for imbalanced DTI data 
-model.train(train, val, test_data, 
-            training_loss = 'BCEWithLogitLoss', 
-            model_path = 'multi_modal_dti_model.pth')
-
-
-# -----------------------------------------------------------
-# SECTION IV: Evaluation and Translational Metrics
-# -----------------------------------------------------------
-
-print("\n--- Evaluating on Rigorous Scaffold-Split Test Set ---")
-
-result, _, pred_probas = model.test(test_data)
-
-roc_auc = result['roc_auc']
-pr_auc = result['precision_recall_auc']
-
-print(f"\n*** Generalization Results (Scaffold-Split) ***")
-print(f"ROC-AUC (Target >= 0.75): {roc_auc:.4f}")
-print(f"PR-AUC (Preferred Metric for Imbalance): {pr_auc:.4f}")
-
-# 2. Translational Metric: Enrichment Factor (EF@1%)
-y_true = Y_test 
-y_score = pred_probas
-
-# Calculate EF at 1% cutoff using ODDT [8, 9, 10]
-EF_1_percent = enrichment_factor(y_true=y_true, 
-                                y_score=y_score, 
-                                percentage=1.0, 
-                                pos_label=1, 
-                                kind='fold')
-
-print(f"\n*** Virtual Screening Performance ***")
-print(f"Enrichment Factor @ 1% (Target >= 5): {EF_1_percent:.2f} Fold")
-
-if roc_auc >= 0.75 and EF_1_percent >= 5.0:
-    print("STATUS: PROJECT GOALS MET - Superior generalization and strong enrichment demonstrated.")
-else:
-    print("STATUS: OPTIMIZATION REQUIRED - Results did not meet all target thresholds.")
+    # 2. Sort groups by size (largest first for deterministic, efficient splitting) [S23, S27
