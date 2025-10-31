@@ -1,7 +1,14 @@
-DeepPurpose
+torch
+dgl
+dgllife
 rdkit
 chembl-webresource-client
-oddt
 numpy
 pandas
-torch
+transformers
+sentencepiece
+lxml 
+# gdsctools 
+scikit-learn
+pyyaml
+tqdm
