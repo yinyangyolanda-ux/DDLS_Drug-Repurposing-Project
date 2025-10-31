@@ -1,1 +1,93 @@
-{"nbformat":4,"nbformat_minor":0,"metadata":{"colab":{"provenance":[],"gpuType":"T4","authorship_tag":"ABX9TyNHuACD1ub00V5hJ4ZK2mCh"},"kernelspec":{"name":"python3","display_name":"Python 3"},"language_info":{"name":"python"},"accelerator":"GPU"},"cells":[{"cell_type":"code","source":["# Save this code as: DDLS_Drug_Repurposing/main.py\n","\n","import os\n","import random\n","import numpy as np\n","import torch\n","from DeepPurpose import utils, DTI\n","from oddt.metrics import enrichment_factor\n","from src.data.chembl_loader import ChEMBLDataLoader\n","# NOTE: Ensure numpy is imported before any CUDA/PyTorch operation for determinism\n","\n","# -----------------------------------------------------------\n","# SECTION 0: Setup and Determinism\n","# -----------------------------------------------------------\n","SEED = 42\n","def set_seed(seed):\n","    random.seed(seed)\n","    np.random.seed(seed)\n","    torch.manual_seed(seed)\n","    if torch.cuda.is_available():\n","        torch.cuda.manual_seed(seed)\n","        torch.cuda.manual_seed_all(seed)\n","        torch.backends.cudnn.deterministic = True\n","        torch.backends.cudnn.benchmark = False\n","set_seed(SEED)\n","device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')\n","ACTIVITY_THRESHOLD = 6.0\n","print(f\"Running pipeline on: {device}\")\n","\n","def load_and_distill_gdsc_features():\n","    print(\"Simulating distillation of GDSC multi-omics features...\")\n","    return \"GDSC_Embedding_Model.h5\"\n","GDSC_CONTEXT_MODEL = load_and_distill_gdsc_features()\n","\n","\n","# -----------------------------------------------------------\n","# SECTION I: Data Acquisition and Splitting\n","# -----------------------------------------------------------\n","loader = ChEMBLDataLoader()\n","CDK2_UNIPROT = 'P24941'\n","try:\n","    target_info = loader.fetch_target(CDK2_UNIPROT)\n","    target_chembl_id = target_info['target_chembl_id']\n","    target_name = target_info['pref_name']\n","except ValueError as e:\n","    print(f\"Error fetching target: {e}. Exiting.\")\n","    exit()\n","\n","df_curated = loader.fetch_and_curate(target_chembl_id, target_name, ACTIVITY_THRESHOLD)\n","df_train, df_test = loader.scaffold_split_data(df_curated)\n","\n","X_train_drug = df_train['canonical_smiles'].values\n","X_train_target = df_train['target_sequence'].values\n","Y_train = df_train['label'].values\n","X_test_drug = df_test['canonical_smiles'].values\n","X_test_target = df_test['target_sequence'].values\n","Y_test = df_test['label'].values\n","\n","# -----------------------------------------------------------\n","# SECTION III: Model Construction and Training\n","# -----------------------------------------------------------\n","\n","drug_encoding = 'AttentiveFP'\n","target_encoding = 'Transformer'\n","\n","print(\"\\nPreparing data for DeepPurpose encoding...\")\n","train, val, _ = utils.data_process(X_drug=X_train_drug, X_target=X_train_target, Y=Y_train,\n","                                   drug_encoding=drug_encoding, target_encoding=target_encoding,\n","                                   split_method='random', frac=[0.8, 0.2, 0.0], random_seed=SEED)\n","\n","test_set = utils.data_process(X_drug=X_test_drug, X_target=X_test_target, Y=Y_test,\n","                              drug_encoding=drug_encoding, target_encoding=target_encoding,\n","                              split_method='random', frac=[1.0, 0.0, 0.0], random_seed=SEED)\n","test_data = test_set\n","\n","# 2. Model Initialization\n","# DEFINITIVE SYNTAX FIX: Providing the required array value for cls_hidden_dims.\n","config = utils.generate_config(drug_encoding=drug_encoding,\n","                               target_encoding=target_encoding,\n","                               cls_hidden_dims = , # Standard MLP fusion architecture\n","                               train_epoch=10,\n","                               LR=0.001,\n","                               batch_size=128,\n","                               binary_thre=ACTIVITY_THRESHOLD)\n","\n","model = DTI.model_initialize(**config).to(device)\n","\n","print(\"\\n--- Starting Training (Tier II Hybrid Model) ---\")\n","model.train(train, val, test_data,\n","            training_loss = 'BCEWithLogitLoss',\n","            model_path = 'models/fusion/multi_modal_dti_model.pth')\n","\n","# -----------------------------------------------------------\n","# SECTION IV: Evaluation and Translational Metrics\n","# -----------------------------------------------------------\n","print(\"\\n--- Evaluating on Rigorous Scaffold-Split Test Set ---\")\n","\n","result, _, pred_probas = model.test(test_data)\n","\n","roc_auc = result['roc_auc']\n","pr_auc = result['precision_recall_auc']\n","\n","print(f\"\\n*** Generalization Results (Scaffold-Split) ***\")\n","print(f\"ROC-AUC (Target >= 0.75): {roc_auc:.4f}\")\n","print(f\"PR-AUC (Preferred Metric for Imbalance): {pr_auc:.4f}\")\n","\n","y_true = Y_test\n","y_score = pred_probas\n","\n","EF_1_percent = enrichment_factor(y_true=y_true,\n","                                y_score=y_score,\n","                                percentage=1.0,\n","                                pos_label=1,\n","                                kind='fold')\n","\n","print(f\"\\n*** Virtual Screening Performance ***\")\n","print(f\"Enrichment Factor @ 1% (Target >= 5): {EF_1_percent:.2f} Fold\")"],"metadata":{"id":"VdzhN4Eq-WiD"},"execution_count":null,"outputs":[]}]}
+# 文件: main.py (在 Colab 或 VS Code 中执行)
+
+import os
+import torch
+import yaml
+from google.colab import drive # 仅在Colab中需要
+from src.data.drugbank_loader import DrugBankXMLLoader
+from src.data.bindingdb_loader import BindingDBLoader
+# from src.data.kg_builder import KnowledgeGraphBuilder # 需要后续实现
+# from src.models.trainer import DTITrainer # 需要后续实现
+
+# --- 配置 ---
+COLAB_PROJECT_DIR = '/content/gdrive/MyDrive/Colab_Projects'
+CONFIG_FILE = 'config/base_config.yaml'
+
+def load_config(config_path):
+    with open(config_path, 'r') as f:
+        return yaml.safe_load(f)
+
+def setup_environment():
+    """设置环境，挂载Drive，并创建目录。"""
+    try:
+        drive.mount('/content/gdrive')
+    except Exception:
+        print("Google Drive 已挂载或环境非 Colab。")
+    
+    os.makedirs(os.path.join(COLAB_PROJECT_DIR, 'DDLS_Drug_Repurposing/data/processed'), exist_ok=True)
+    os.makedirs(os.path.join(COLAB_PROJECT_DIR, 'DDLS_Drug_Repurposing/config'), exist_ok=True)
+    os.chdir(os.path.join(COLAB_PROJECT_DIR, 'DDLS_Drug_Repurposing'))
+    
+    print(f"当前工作目录已切换至: {os.getcwd()}")
+    
+    # 创建简化版的配置文件 (通常应从GitHub克隆)
+    config_content = f"""
+    project_name: DDLS_Hybrid_Repurposing
+    data:
+      raw_dir: {COLAB_PROJECT_DIR}/DDLS_Drug_Repurposing/data/raw
+      processed_dir: {COLAB_PROJECT_DIR}/DDLS_Drug_Repurposing/data/processed
+      kg_dir: {COLAB_PROJECT_DIR}/DDLS_Drug_Repurposing/data/knowledge_graph
+      drugbank_zip: {COLAB_PROJECT_DIR}/drugbank_all_full_database.xml.zip
+      bindingdb_zip: {COLAB_PROJECT_DIR}/BDB-mySQL_All_202511_dmp.zip
+      gdsc_mobem_zip: {COLAB_PROJECT_DIR}/GDSC-mobem-csv.zip
+
+    model:
+      fusion_type: Hybrid_KG_TransformerDTA
+      target_unseen_strategy: R-GCN_Zero_Shot
+      graph_embedding_dim: 128
+      transformer_dim: 256
+    """
+    with open(CONFIG_FILE, 'w') as f:
+        f.write(config_content)
+
+def main_workflow():
+    setup_environment()
+    config = load_config(CONFIG_FILE)
+    
+    print("\n--- 阶段一：多源数据整合与特征提取 ---")
+    
+    # 1. 加载 DrugBank 数据 (XML 解析)
+    db_loader = DrugBankXMLLoader(zip_path=config['data']['drugbank_zip'], cache_dir=config['data']['processed_dir'])
+    db_df = db_loader.parse_drugs()
+    
+    # 2. 加载 BindingDB 数据 (TSV 解析)
+    bdb_loader = BindingDBLoader(zip_path=config['data']['bindingdb_zip'], cache_dir=config['data']['processed_dir'])
+    bdb_df = bdb_loader.load_and_preprocess()
+    
+    # 3. GDSC 数据加载（仅占位，实际需要解压和解析 MoBEM 文件）
+    print(f"GDSC MoBEM 文件路径: {config['data']['gdsc_mobem_zip']}")
+    print("TODO: 实现 GDSC MoBEM 解压和特征工程（Autoencoder/VAE 降维）[3]。")
+    
+    # 4. 知识图谱构建 (TODO: 在 src/data/kg_builder.py 中实现)
+    print("\n--- 阶段二：知识图谱构建（DRKG）与嵌入 ---")
+    # kg_builder = KnowledgeGraphBuilder(db_df, bdb_df, disgenet_df, config)
+    # kg = kg_builder.build_graph()
+    # kg_embeddings = kg_builder.train_kge_model(model_type='CompGCN')
+    
+    # 5. 混合模型训练（TransformerDTA + KG 嵌入）
+    print("\n--- 阶段三：混合模型训练与零样本预测 ---")
+    # trainer = DTITrainer(config)
+    # trainer.train_hybrid_dta(kg_embeddings)
+    
+    # 6. 肽类药物零样本预测
+    peptides = # Tirzepatide, Semaglutide, Pegloxenatide
+    rare_target = 'CFTR_HUMAN' # 囊性纤维化靶点
+    print(f"\n--- 案例分析：预测 {peptides} 对 {rare_target} 的重定向潜力 ---")
+    # repurposing_results = trainer.predict_zero_shot(peptides, rare_target, kg_embeddings)
+    # print(repurposing_results)
+    
+    print("\n✓ 核心数据整合阶段完成。请在本地VS Code中继续实现KG构建和模型训练模块。")
+
+
+if __name__ == '__main__':
+    main_workflow()
