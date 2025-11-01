@@ -1,0 +1,57 @@
+```yaml
+
+project_info:
+  name: DDLS_Hybrid_Repurposing
+  seed: 42
+  device: cuda # or cpu
+
+# --- 数据路径配置 ---
+data:
+  # 注意: 以下路径在 Colab 环境中需映射到 /content/gdrive/MyDrive/Colab_Projects/
+  raw_dir: data/raw
+  processed_dir: data/processed
+  kg_dir: data/knowledge_graph
+  
+  # 您的 Google Drive 数据源
+  drugbank_zip:../Colab_Projects/drugbank_all_full_database.xml.zip
+  bindingdb_zip:../Colab_Projects/BDB-mySQL_All_202511_dmp.zip
+  gdsc_mobem_zip:../Colab_Projects/GDSC-mobem-csv.zip
+  
+  # 目标肽类药物序列 (Tirzepatide - 简化占位符)
+  peptide_targets:
+    Tirzepatide: DB15171
+    Semaglutide: DB13928
+    Pegloxenatide: DB19230
+  
+# --- 模型架构配置 ---
+model:
+  drug_encoder:
+    type: AttentiveFP
+    graph_feat_size: 200
+  target_encoder:
+    type: ProtBERT
+    model_name: Rostlab/prot_bert_bfd
+    embedding_dim: 1024 # ProtBERT output dim
+    freeze_backbone: true # 冻结骨干层以保持稳定性
+  kg_encoder:
+    type: CompGCN # 关系图 GNN
+    embedding_dim: 128
+  fusion:
+    fusion_type: Cross_Attention_Hybrid
+    hidden_dim: 256
+    num_heads: 4
+  decoder:
+    mlp_hidden_dims: 
+    dropout: 0.2
+
+# --- 训练配置 ---
+training:
+  batch_size: 32
+  num_epochs: 100
+  learning_rate: 0.0001
+  early_stopping_patience: 20
+
+# --- 评估配置 ---
+evaluation:
+  pchembl_threshold: 6.0
+  metrics: [roc_auc, pr_auc, ef_1]
