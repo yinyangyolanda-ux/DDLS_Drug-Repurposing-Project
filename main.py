@@ -1,92 +1,105 @@
-# 文件: main.py (在 Colab 或 VS Code 中执行)
+# 文件: main.py (最终协调脚本)
 
 import os
-import torch
+import sys
 import yaml
-from google.colab import drive # 仅在Colab中需要
+import torch
+from pathlib import Path
+from google.colab import drive 
+
+# 假设所有模块都在 sys.path 中 (通过 os.chdir 到项目根目录实现)
 from src.data.drugbank_loader import DrugBankXMLLoader
 from src.data.bindingdb_loader import BindingDBLoader
-# from src.data.kg_builder import KnowledgeGraphBuilder # 需要后续实现
-# from src.models.trainer import DTITrainer # 需要后续实现
+from src.data.uniprot_loader import UniProtFetcher
+# from src.data.gdsc_loader import GDSCLoader # 假设已实现 VAE
+# from src.data.kg_builder import KnowledgeGraphBuilder # 假设已实现
+# from src.training.trainer import DTITrainer # 假设已实现
+# from src.models.transformer_dta import HybridTransformerDTA, AttentiveFPDrugEncoder, ProteinTransformerEncoder
 
 # --- 配置 ---
-COLAB_PROJECT_DIR = '/content/gdrive/MyDrive/Colab_Projects'
-CONFIG_FILE = 'config/base_config.yaml'
+COLAB_PROJECT_ROOT = Path('/content/gdrive/MyDrive/Colab_Projects/DDLS_Drug-Repurposing-Project')
+CONFIG_PATH = COLAB_PROJECT_ROOT / 'config/base_config.yaml'
 
 def load_config(config_path):
     with open(config_path, 'r') as f:
         return yaml.safe_load(f)
 
-def setup_environment():
-    """设置环境，挂载Drive，并创建目录。"""
-    try:
+def setup_environment(config):
+    """设置环境，挂载 Drive，并切换到项目根目录。"""
+    if 'google.colab' in sys.modules:
         drive.mount('/content/gdrive')
-    except Exception:
-        print("Google Drive 已挂载或环境非 Colab。")
     
-    os.makedirs(os.path.join(COLAB_PROJECT_DIR, 'DDLS_Drug_Repurposing/data/processed'), exist_ok=True)
-    os.makedirs(os.path.join(COLAB_PROJECT_DIR, 'DDLS_Drug_Repurposing/config'), exist_ok=True)
-    os.chdir(os.path.join(COLAB_PROJECT_DIR, 'DDLS_Drug_Repurposing'))
+    # 确保路径是绝对路径
+    for key in ['raw_dir', 'processed_dir', 'kg_dir']:
+        config['data'][key] = str(COLAB_PROJECT_ROOT / config['data'][key])
     
-    print(f"当前工作目录已切换至: {os.getcwd()}")
+    # 切换到项目根目录
+    os.chdir(COLAB_PROJECT_ROOT)
+    sys.path.append(os.getcwd())
     
-    # 创建简化版的配置文件 (通常应从GitHub克隆)
-    config_content = f"""
-    project_name: DDLS_Hybrid_Repurposing
-    data:
-      raw_dir: {COLAB_PROJECT_DIR}/DDLS_Drug_Repurposing/data/raw
-      processed_dir: {COLAB_PROJECT_DIR}/DDLS_Drug_Repurposing/data/processed
-      kg_dir: {COLAB_PROJECT_DIR}/DDLS_Drug_Repurposing/data/knowledge_graph
-      drugbank_zip: {COLAB_PROJECT_DIR}/drugbank_all_full_database.xml.zip
-      bindingdb_zip: {COLAB_PROJECT_DIR}/BDB-mySQL_All_202511_dmp.zip
-      gdsc_mobem_zip: {COLAB_PROJECT_DIR}/GDSC-mobem-csv.zip
-
-    model:
-      fusion_type: Hybrid_KG_TransformerDTA
-      target_unseen_strategy: R-GCN_Zero_Shot
-      graph_embedding_dim: 128
-      transformer_dim: 256
-    """
-    with open(CONFIG_FILE, 'w') as f:
-        f.write(config_content)
+    print(f"当前工作目录: {os.getcwd()}")
+    return config
 
 def main_workflow():
-    setup_environment()
-    config = load_config(CONFIG_FILE)
+    # 1. 环境与配置
+    config = load_config(CONFIG_PATH)
+    config = setup_environment(config)
     
-    print("\n--- 阶段一：多源数据整合与特征提取 ---")
+    # 设置随机种子 (假设 set_seed 已在 helpers 中实现)
+    # set_seed(config['project_info']['seed']) 
+
+    print("\n" + "="*60)
+    print("阶段 I: 多源数据整合与特征提取")
+    print("="*60)
     
-    # 1. 加载 DrugBank 数据 (XML 解析)
+    # 1.1 加载 DrugBank 数据
     db_loader = DrugBankXMLLoader(zip_path=config['data']['drugbank_zip'], cache_dir=config['data']['processed_dir'])
-    db_df = db_loader.parse_drugs()
-    
-    # 2. 加载 BindingDB 数据 (TSV 解析)
+    # db_df = db_loader.parse_drugs() # 实际运行时需运行此行
+
+    # 1.2 加载 BindingDB 数据
     bdb_loader = BindingDBLoader(zip_path=config['data']['bindingdb_zip'], cache_dir=config['data']['processed_dir'])
-    bdb_df = bdb_loader.load_and_preprocess()
+    # bdb_df = bdb_loader.load_and_preprocess() # 实际运行时需运行此行
+
+    # 1.3 罕见病靶点序列获取 (CFTR)
+    uniprot_fetcher = UniProtFetcher()
+    # 肽类药物靶点 (GLP1R: P43220, GIPR: P48039)
+    target_uids = ['P13569', 'P43220', 'P48039'] 
+    # sequences = uniprot_fetcher.fetch_batch(target_uids) # 实际运行时需运行此行
+
+    # 1.4 GDSC 基因组特征降维
+    # gdsc_loader = GDSCLoader(...)
+    # gdsc_embeddings = gdsc_loader.train_vae(...) # 运行 VAE 降维
+
+    print("\n" + "="*60)
+    print("阶段 II: 知识图谱与模型训练（占位符）")
+    print("="*60)
     
-    # 3. GDSC 数据加载（仅占位，实际需要解压和解析 MoBEM 文件）
-    print(f"GDSC MoBEM 文件路径: {config['data']['gdsc_mobem_zip']}")
-    print("TODO: 实现 GDSC MoBEM 解压和特征工程（Autoencoder/VAE 降维）[3]。")
+    # 2.1 知识图谱构建与嵌入训练 (CompGCN)
+    # kg_builder = KnowledgeGraphBuilder(db_df, bdb_df,...)
+    # kg_graph = kg_builder.build_graph()
+    # kg_embeddings = kg_builder.train_kge_model(kg_graph,...)
     
-    # 4. 知识图谱构建 (TODO: 在 src/data/kg_builder.py 中实现)
-    print("\n--- 阶段二：知识图谱构建（DRKG）与嵌入 ---")
-    # kg_builder = KnowledgeGraphBuilder(db_df, bdb_df, disgenet_df, config)
-    # kg = kg_builder.build_graph()
-    # kg_embeddings = kg_builder.train_kge_model(model_type='CompGCN')
+    # 2.2 混合模型训练
+    # drug_enc = AttentiveFPDrugEncoder(...)
+    # target_enc = ProteinTransformerEncoder(...)
+    # hybrid_model = HybridTransformerDTA(drug_enc, target_enc, kg_embeddings, config)
+    # trainer = DTITrainer(hybrid_model, kg_embeddings,...)
+    # trainer.train()
+
+    print("\n" + "="*60)
+    print("阶段 III: 肽类药物零样本重定向预测")
+    print("="*60)
+
+    peptides = {
+        'Tirzepatide': 'P48039', 
+        'Semaglutide': 'P43220', 
+        'Pegloxenatide': 'P43220'
+    }
+    rare_target = 'P13569' # CFTR UniProt ID
     
-    # 5. 混合模型训练（TransformerDTA + KG 嵌入）
-    print("\n--- 阶段三：混合模型训练与零样本预测 ---")
-    # trainer = DTITrainer(config)
-    # trainer.train_hybrid_dta(kg_embeddings)
+    # prediction_results = trainer.predict_zero_shot(peptides, rare_target)
     
-    # 6. 肽类药物零样本预测
-    peptides = # Tirzepatide, Semaglutide, Pegloxenatide
-    rare_target = 'CFTR_HUMAN' # 囊性纤维化靶点
-    print(f"\n--- 案例分析：预测 {peptides} 对 {rare_target} 的重定向潜力 ---")
-    # repurposing_results = trainer.predict_zero_shot(peptides, rare_target, kg_embeddings)
-    # print(repurposing_results)
-    
-    print("\n✓ 核心数据整合阶段完成。请在本地VS Code中继续实现KG构建和模型训练模块。")
+    print(f"核心流程协调完成。请在 Colab Notebook 中运行此脚本，并通过 Notebook Cell 逐一执行数据加载器的核心逻辑。")
 
 
 if __name__ == '__main__':
